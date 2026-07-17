@@ -203,3 +203,101 @@ export function register(program: Command): void;
 - 出力は日本語。エラーは `pc.red('✖ ...')` 形式で stderr へ、exit code 1
 - 非 TTY(パイプ)では ps/list は色なし・対話なしで動くこと(`process.stdout.isTTY` 判定。picocolors は自動対応)
 - clack のキャンセル(`isCancel`)は必ずハンドリングして静かに exit 0
+
+---
+
+# v0.2 追加機能設計: stats / tail / find
+
+## ファイル所有権(並行実装の契約)
+
+- エージェント D: `src/core/usage.ts`(新規)+ `src/commands/stats.ts`
+- エージェント E: `src/commands/tail.ts`
+- エージェント F: `src/commands/find.ts` + `src/commands/menu.ts`(find 項目の追加のみ)
+- `index.ts` への register 追加とスタブ作成はオーケストレーター(Fable)が実施済み。**担当外のファイル(core/format.ts 等の既存 core 含む)は変更禁止。他人のファイルは読むのは自由**
+
+## データ根拠(実機確認済み)
+
+`assistant` 行に以下が含まれる:
+
+```json
+{"type":"assistant","requestId":"req_...","message":{"model":"claude-fable-5","usage":{
+  "input_tokens":3988,"cache_creation_input_tokens":3950,"cache_read_input_tokens":18172,
+  "output_tokens":301,
+  "cache_creation":{"ephemeral_1h_input_tokens":3950,"ephemeral_5m_input_tokens":0}}},
+ "timestamp":"2026-07-16T08:29:09.521Z"}
+```
+
+**重要: 1 回の API 応答は複数の assistant 行に分割して書かれ、同じ `requestId` と同じ usage を持つ。単純合計すると多重計上になるため、ファイル内で `requestId`(なければ `message.id`)による重複排除が必須**(同一 requestId は最後の行の usage を 1 回だけ計上)。
+
+実データに出現するモデル: `claude-fable-5`, `claude-sonnet-5`, `claude-opus-4-7`, `claude-opus-4-8`, `sonnet`, `<synthetic>` など。未知モデルはトークン数のみ集計しコストは null。
+
+## 価格表(2026-07 時点、claude-api スキルで確認済み)
+
+`src/core/usage.ts` 内に定義。単位: USD / MTok。
+
+| モデル(前方一致) | input | output | 備考 |
+|---|---|---|---|
+| claude-fable-5, claude-mythos-5 | 10 | 50 | |
+| claude-opus-4-8, -4-7, -4-6, -4-5 | 5 | 25 | |
+| claude-opus-4-1, -4-0, claude-opus-4- | 15 | 75 | 旧世代 |
+| claude-sonnet-5 | 3 | 15 | **2026-08-31 まで導入価格 input 2 / output 10**(実行日で判定) |
+| claude-sonnet-4-6, -4-5, -4-0 | 3 | 15 | |
+| claude-haiku-4-5 | 1 | 5 | |
+
+キャッシュ係数(input 単価に対する倍率): 書込 5m = **1.25x**、書込 1h = **2x**、読取 = **0.1x**。
+コスト = input×in + output×out + 5m書込×1.25×in + 1h書込×2×in + 読取×0.1×in(全て /1M トークン)。
+`cache_creation` オブジェクトがない行は `cache_creation_input_tokens` 全量を 5m 扱い。
+
+## core/usage.ts API
+
+```ts
+export interface ModelUsage {
+  model: string;
+  calls: number;          // 重複排除後の API 呼び出し数
+  inputTokens: number;
+  outputTokens: number;
+  cacheWrite5m: number;
+  cacheWrite1h: number;
+  cacheRead: number;
+  costUSD: number | null; // 価格表にないモデルは null
+}
+export async function aggregateUsage(opts?: {
+  project?: string;        // encoded プロジェクト名(listSessions と同じ意味)
+  days?: number;           // assistant 行の timestamp が N 日以内のもののみ
+}): Promise<ModelUsage[]>;  // costUSD 降順(null は末尾)
+```
+
+実装: 全プロジェクトの .jsonl を readline ストリーミング、`"type":"assistant"` を含む行のみ parse。requestId 重複排除はファイル単位の Map でよい(メモリ節約のためファイル毎にクリア)。
+
+## `cctl stats` — モデル別トークン/コスト集計(D)
+
+- テーブル: `MODEL / CALLS / INPUT / OUTPUT / CACHE W / CACHE R / COST`
+  - CACHE W は 5m+1h 合算表示。トークンは `1.2M` `345K` 形式(ローカルヘルパー fmtTokens)
+  - COST は `$12.34` 形式。null は `-`
+  - 最下段に合計行(TOTAL)。区切り線は core/format.ts の table に任せる(header 指定)
+- フラグ: `--project, -p <path>`(list と同じ `.` 解決)、`--days, -d <n>`、`--json`
+- 末尾に注記: `※ コストは概算です(標準API価格・キャッシュ係数で計算)`
+- 非 TTY でも動作(対話なし)
+
+## `cctl tail <idPrefix>` — 会話のライブ表示(E)
+
+- `idPrefix` 指定時は findSession で解決。省略時は getLiveSessions() から clack select で選択(TTY 必須。live 0 件ならエラー)
+- 起動時: セッションのタイトルを 1 行表示 → 直近 `--lines, -n <num>`(デフォルト 5)件の user/assistant メッセージを show と同じ描画(👤/🤖 プレフィックス、⚙ ToolName、thinking スキップ、3 行 truncate)
+- その後 follow モード: `── フォロー中 (Ctrl-C で終了) ──` を表示し、jsonl への追記を検知して新しい user/assistant 行を逐次描画
+  - 実装: 現在のファイルサイズを offset として保持 → `fs.watch(filePath)`(rename イベントや環境差に備え 1 秒間隔の `fs.stat` ポーリングをフォールバックとして併用)→ サイズ増加時に `createReadStream({start: offset})` で追記分だけ読み、**改行で終わらない末尾の不完全行はバッファに保持**して次回に結合
+  - `ai-title` 行が来たらタイトル変更を `✦ タイトル: ...` で表示
+- Ctrl-C で正常終了(exit 0)
+
+## `cctl find [query]`(エイリアス: `f`)— fzf 風インクリメンタル検索(F)
+
+- `@clack/prompts` の **autocomplete** を使用(実装前に node_modules/@clack/prompts の型定義でシグネチャを必ず確認すること)
+- 対象: listSessions({limit: 100})。候補ラベル: `shortId  タイトル ─ dir名 ─ 相対時刻`、hint に lastPrompt。検索対象文字列にはタイトル・lastPrompt・cwd・sessionId を含める(autocomplete のフィルタが label しか見ない場合は、候補生成時に検索用文字列を label に含める工夫ではなく、カスタム filter オプションがあればそれを使う。なければ label ベースで妥協してよい)
+- `query` 引数は初期入力として扱えるなら使う(API が対応していなければ無視してよい)
+- 選択後のアクション select: `▶ 再開` / `📄 詳細を表示` / `📝 Markdown エクスポート` / `キャンセル`
+  - 既存コマンドの run 関数(resume.ts の runResume 等)が import できる形なら再利用。export されていない場合は **他人のファイルを変更せず**、core API(resumeSession / parseSessionMeta 等)で find.ts 内に最小実装
+- TTY 必須(非 TTY はエラーで exit 1)
+- menu.ts に `🔎 セッションを探す(インクリメンタル検索)` 項目を追加して find の本体関数を呼ぶ(menu.ts の変更はこの 1 項目の追加に留める)
+
+## 共通 UX(v0.1 と同じ)
+
+日本語出力、エラーは赤 `✖` で stderr / exit 1、clack キャンセルは静かに exit 0。

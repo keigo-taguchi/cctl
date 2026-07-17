@@ -9,6 +9,9 @@ import { register as registerResume } from './commands/resume.js';
 import { register as registerMenu } from './commands/menu.js';
 import { register as registerShow } from './commands/show.js';
 import { register as registerExport } from './commands/export.js';
+import { register as registerStats } from './commands/stats.js';
+import { register as registerTail } from './commands/tail.js';
+import { register as registerFind } from './commands/find.js';
 
 const program = new Command();
 
@@ -22,6 +25,9 @@ registerResume(program);
 registerMenu(program);
 registerShow(program);
 registerExport(program);
+registerStats(program);
+registerTail(program);
+registerFind(program);
 
 // 引数なしで実行された場合は menu コマンドを起動する
 if (process.argv.length <= 2) {

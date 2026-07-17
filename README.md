@@ -33,6 +33,9 @@ npm link   # cctl コマンドをグローバルに使えるようにする
 | `cctl show <id>` | セッションの詳細と直近の会話を表示 |
 | `cctl export <id>` | トランスクリプトを Markdown にエクスポート |
 | `cctl clean` | 古い・空のセッションを整理(`--dry-run` あり) |
+| `cctl stats` | モデル別のトークン使用量とコストを集計(`--days` / `--json` 対応) |
+| `cctl tail [id]` | セッションの会話を tail -f 風にライブ表示 |
+| `cctl find [query]` (`f`) | fzf 風インクリメンタル検索 → 再開/詳細/エクスポート |
 
 ## 使用例
 
@@ -52,6 +55,15 @@ cctl search 認証
 # 30日以上前のセッションを確認してから削除
 cctl clean --dry-run
 cctl clean
+
+# 直近7日のモデル別トークン/コスト概算
+cctl stats --days 7
+
+# 実行中セッションの会話をライブで眺める
+cctl tail
+
+# インクリメンタル検索で見つけて、そのまま再開
+cctl f 認証
 ```
 
 ## 仕組み

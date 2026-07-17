@@ -5,6 +5,7 @@ import { runPs } from './ps.js';
 import { runSearch } from './search.js';
 import { runClean } from './clean.js';
 import { runResume } from './resume.js';
+import { runFind } from './find.js';
 
 /** 標準入出力が TTY かどうか(対話プロンプトが使えるかどうか)を判定する。 */
 function isInteractiveTTY(): boolean {
@@ -17,7 +18,7 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-type MenuAction = 'ps' | 'resume' | 'search' | 'clean' | 'exit';
+type MenuAction = 'ps' | 'resume' | 'search' | 'find' | 'clean' | 'exit';
 
 export async function runMenu(): Promise<void> {
   if (!isInteractiveTTY()) {
@@ -33,6 +34,7 @@ export async function runMenu(): Promise<void> {
         { value: 'ps', label: '📡 実行中セッションを見る' },
         { value: 'resume', label: '▶ セッションを再開' },
         { value: 'search', label: '🔍 検索' },
+        { value: 'find', label: '🔎 セッションを探す(インクリメンタル検索)' },
         { value: 'clean', label: '🧹 クリーンアップ' },
         { value: 'exit', label: '終了' },
       ],
@@ -62,6 +64,9 @@ export async function runMenu(): Promise<void> {
           await runSearch(keyword, {});
           break;
         }
+        case 'find':
+          await runFind({});
+          break;
         case 'clean':
           await runClean({});
           break;
