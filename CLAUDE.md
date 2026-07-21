@@ -18,7 +18,9 @@ cctl — Claude Code のセッション管理 CLI(TypeScript ESM / commander / @
 - トランスクリプト(.jsonl)は 8MB 超がありうる。**全行 JSON.parse は禁止** — readline ストリーミング + `line.includes('"type":"…"')` の前置フィルタで対象行だけ parse する
 - `user` / `assistant` 行は `type` フィールドが行頭に来ない(`parentUuid` 等が先行)ため、`startsWith` 判定は使えない
 - **usage 集計は requestId による重複排除が必須**。1 回の API 応答は複数の assistant 行に分割記録され、同じ `requestId`・同じ `usage` を持つ(単純合計すると実測で約 2.1 倍の過大計上)
+- **セッションは 1 ファイルで完結しない**。`<sessionId>/subagents/…` にサブエージェント・ワークフローのトランスクリプトが入れ子で置かれ、実データでは全体の 3 割以上を占める。容量集計・削除・アーカイブでは必ずサイドカーを含める(`core/pins.ts` の `sidecarDir()` / `measureSessionSize()`)
 - 実行中セッションのレジストリ(`~/.claude/sessions/<pid>.json`)には stale ファイルが残ることがある。必ず `process.kill(pid, 0)` で生存確認(EPERM は alive、ESRCH は dead)
+- `cleanupPeriodDays` に **`0` を設定してはいけない**(本体が拒否する。かつては「トランスクリプトを書かない」の意味で、履歴喪失の事故があった)。実質無期限は `3650` のような大きい値で表現する
 - resume はセッションの元 cwd で `claude` を spawn する。cwd が消えている場合はエラーにする
 
 ### コード規約
@@ -48,3 +50,8 @@ cctl — Claude Code のセッション管理 CLI(TypeScript ESM / commander / @
 2. `node dist/index.js <対象コマンド>` を実データで実行して出力を目視確認(ps / list / stats / search / clean --dry-run は非対話で確認できる)
 3. 対話コマンド(resume / menu / find / tail)は非 TTY のエラーパスと `--help` を確認
 4. resume の spawn 経路を通す必要があるときは、無害なパススルー(`cctl resume <id> --safe -- --help`)を使う。本物の対話セッションを起動しない
+5. `~/.claude` や設定を**書き換える経路(retention / pin / restore / clean)は一時 HOME で検証する**。`os.homedir()` は POSIX で `$HOME` を尊重するため、実環境に一切触れずに全経路を通せる:
+
+   ```
+   HOME=<tmp> XDG_CONFIG_HOME=<tmp>/.config node dist/index.js retention --forever
+   ```

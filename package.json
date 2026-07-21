@@ -1,6 +1,6 @@
 {
   "name": "@ketaguchi0722/cctl",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Session manager CLI for Claude Code — monitor, list, resume, search and clean up sessions",
   "type": "module",
   "bin": {

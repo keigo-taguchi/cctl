@@ -32,7 +32,12 @@ npm link   # cctl コマンドをグローバルに使えるようにする
 | `cctl search <keyword>` | 全セッションのトランスクリプトを横断検索 |
 | `cctl show <id>` | セッションの詳細と直近の会話を表示 |
 | `cctl export <id>` | トランスクリプトを Markdown にエクスポート |
-| `cctl clean` | 古い・空のセッションを整理(`--dry-run` あり) |
+| `cctl clean` | 古い・空のセッションを整理(`--dry-run` あり。pin 済みは除外) |
+| `cctl retention [days]` | 履歴の保持期間を表示・設定(`--forever` で実質無期限) |
+| `cctl pin <id>` | セッションを永続化(clean の対象外にし、アーカイブを保管) |
+| `cctl unpin <id>` | 永続化を解除(`--purge` でアーカイブも削除) |
+| `cctl pins` | 永続化したセッションの一覧(`--sync` でアーカイブ更新) |
+| `cctl restore <id>` | アーカイブからセッションを復元 |
 | `cctl stats` | モデル別のトークン使用量とコストを集計(`--days` / `--json` 対応) |
 | `cctl tail [id]` | セッションの会話を tail -f 風にライブ表示 |
 | `cctl find [query]` (`f`) | fzf 風インクリメンタル検索 → 再開/詳細/エクスポート |
@@ -64,7 +69,27 @@ cctl tail
 
 # インクリメンタル検索で見つけて、そのまま再開
 cctl f 認証
+
+# 履歴が消える設定になっていないか確認する
+cctl retention
+
+# 本体の自動削除を止めて、残すものを自分で選ぶ運用に切り替える
+cctl retention --forever
+cctl pin 4e1ac4fe          # 残したいセッションに印を付ける(アーカイブも保管)
+cctl clean --dry-run       # pin 済みを除いて整理対象を確認
 ```
+
+### 履歴の保持について
+
+Claude Code はトランスクリプトを **デフォルト 30 日で自動削除** します(設定キー `cleanupPeriodDays`)。
+`cctl retention` で現状を確認でき、`--forever` で実質無期限(3650 日)にできます。
+
+> `cleanupPeriodDays` に `0` を設定してはいけません。本体に拒否されます
+> (かつては「トランスクリプトを書かない」の意味で、履歴が失われる事故がありました)。
+
+保持期間を延ばしたうえで、`cctl pin` で残すものを選び、`cctl clean` で整理する運用を想定しています。
+pin したセッションは gzip アーカイブとして `~/.config/cctl/archive/` に保管され、
+本体に削除された後でも `cctl restore` で復元できます(サブエージェントの記録も含みます)。
 
 ## 仕組み
 

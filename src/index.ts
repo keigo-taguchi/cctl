@@ -12,10 +12,12 @@ import { register as registerExport } from './commands/export.js';
 import { register as registerStats } from './commands/stats.js';
 import { register as registerTail } from './commands/tail.js';
 import { register as registerFind } from './commands/find.js';
+import { register as registerRetention } from './commands/retention.js';
+import { register as registerPin } from './commands/pin.js';
 
 const program = new Command();
 
-program.name('cctl').description('Claude Code Session Manager CLI').version('0.1.0');
+program.name('cctl').description('Claude Code Session Manager CLI').version('0.3.0');
 
 registerPs(program);
 registerList(program);
@@ -28,6 +30,8 @@ registerExport(program);
 registerStats(program);
 registerTail(program);
 registerFind(program);
+registerRetention(program);
+registerPin(program);
 
 // 引数なしで実行された場合は menu コマンドを起動する
 if (process.argv.length <= 2) {
