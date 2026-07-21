@@ -72,8 +72,25 @@ export async function setRetentionDays(days: number, file = userSettingsFile()):
     );
   }
   const { data } = await readSettings(file);
-  const next = { ...(data ?? {}), cleanupPeriodDays: days };
+  await writeSettings({ ...(data ?? {}), cleanupPeriodDays: days }, file);
+}
+
+/**
+ * cleanupPeriodDays のキーごと削除して未設定に戻す。
+ * 「30 を明示的に設定する」のとは違い、本体のデフォルトに追随する状態になる。
+ * 既に未設定だった場合は false を返す。
+ */
+export async function unsetRetentionDays(file = userSettingsFile()): Promise<boolean> {
+  const { data } = await readSettings(file);
+  if (!data || !('cleanupPeriodDays' in data)) return false;
+  const { cleanupPeriodDays: _removed, ...rest } = data;
+  await writeSettings(rest, file);
+  return true;
+}
+
+/** 一時ファイル + rename で差し替える(書き込み中の中断で設定を壊さない) */
+async function writeSettings(data: Record<string, unknown>, file: string): Promise<void> {
   const tmp = `${file}.cctl.tmp`;
-  await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
   await rename(tmp, file);
 }

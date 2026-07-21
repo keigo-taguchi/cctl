@@ -33,7 +33,7 @@ npm link   # cctl コマンドをグローバルに使えるようにする
 | `cctl show <id>` | セッションの詳細と直近の会話を表示 |
 | `cctl export <id>` | トランスクリプトを Markdown にエクスポート |
 | `cctl clean` | 古い・空のセッションを整理(`--dry-run` あり。pin 済みは除外) |
-| `cctl retention [days]` | 履歴の保持期間を表示・設定(`--forever` で実質無期限) |
+| `cctl retention [days]` | 履歴の保持期間を表示・設定(`--forever` で実質無期限、`--unset` で既定に戻す) |
 | `cctl pin <id>` | セッションを永続化(clean の対象外にし、アーカイブを保管) |
 | `cctl unpin <id>` | 永続化を解除(`--purge` でアーカイブも削除) |
 | `cctl pins` | 永続化したセッションの一覧(`--sync` でアーカイブ更新) |
@@ -83,6 +83,7 @@ cctl clean --dry-run       # pin 済みを除いて整理対象を確認
 
 Claude Code はトランスクリプトを **デフォルト 30 日で自動削除** します(設定キー `cleanupPeriodDays`)。
 `cctl retention` で現状を確認でき、`--forever` で実質無期限(3650 日)にできます。
+元に戻すときは `cctl retention --unset`(設定キーごと削除して未設定に戻す)です。
 
 > `cleanupPeriodDays` に `0` を設定してはいけません。本体に拒否されます
 > (かつては「トランスクリプトを書かない」の意味で、履歴が失われる事故がありました)。

@@ -10,6 +10,7 @@ import {
   MIN_RETENTION_DAYS,
   getRetentionDays,
   setRetentionDays,
+  unsetRetentionDays,
   userSettingsFile,
 } from '../core/settings.js';
 import { getPinnedIds, measureSessionSize } from '../core/pins.js';
@@ -18,6 +19,7 @@ import { fmtSize } from '../core/format.js';
 export interface RetentionOptions {
   days?: number;
   forever?: boolean;
+  unset?: boolean;
   yes?: boolean;
 }
 
@@ -118,11 +120,49 @@ async function showStatus(): Promise<void> {
     );
     console.log(pc.dim('  以降は cctl clean で選択的に整理してください(pin 済みは除外されます)'));
     console.log();
+  } else {
+    console.log(pc.dim('  未設定(本体のデフォルト)に戻すには: cctl retention --unset'));
+    console.log();
   }
+}
+
+/**
+ * 短縮は削除範囲が広がる方向なので確認を挟む。
+ * 続行してよければ true を返す。
+ */
+async function confirmShortening(effective: number, target: number, yes: boolean): Promise<boolean> {
+  if (target >= effective || yes) return true;
+
+  if (!process.stdin.isTTY) {
+    console.error(
+      pc.red(`✖ 保持期間を ${effective}日 → ${target}日 に短縮すると削除対象が増えます。`) +
+        '非対話で実行するには --yes を付けてください',
+    );
+    process.exit(1);
+  }
+
+  const proceed = await confirm({
+    message: `保持期間を ${effective}日 → ${target}日 に短縮します。対象外になった履歴は削除されます。続けますか?`,
+    initialValue: false,
+  });
+  if (isCancel(proceed)) {
+    cancel('キャンセルしました');
+    process.exit(0);
+  }
+  if (!proceed) {
+    console.log('中止しました');
+    return false;
+  }
+  return true;
 }
 
 /** cctl retention の本体ロジック。 */
 export async function runRetention(opts: RetentionOptions = {}): Promise<void> {
+  if (opts.unset) {
+    await runUnset(opts.yes === true);
+    return;
+  }
+
   const target = opts.forever ? FOREVER_RETENTION_DAYS : opts.days;
 
   if (target === undefined) {
@@ -138,28 +178,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<void> {
     return;
   }
 
-  // 短縮は削除範囲が広がる方向なので確認を挟む
-  if (target < effective && !opts.yes) {
-    if (!process.stdin.isTTY) {
-      console.error(
-        pc.red(`✖ 保持期間を ${effective}日 → ${target}日 に短縮すると削除対象が増えます。`) +
-          ' 非対話で実行するには --yes を付けてください',
-      );
-      process.exit(1);
-    }
-    const proceed = await confirm({
-      message: `保持期間を ${effective}日 → ${target}日 に短縮します。対象外になった履歴は削除されます。続けますか?`,
-      initialValue: false,
-    });
-    if (isCancel(proceed)) {
-      cancel('キャンセルしました');
-      process.exit(0);
-    }
-    if (!proceed) {
-      console.log('中止しました');
-      return;
-    }
-  }
+  if (!(await confirmShortening(effective, target, opts.yes === true))) return;
 
   await setRetentionDays(target);
   console.log(pc.green(`✓ cleanupPeriodDays: ${target} を ${userSettingsFile()} に設定しました`));
@@ -168,25 +187,58 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<void> {
   }
 }
 
+/** cleanupPeriodDays を削除して未設定(本体のデフォルト)に戻す。 */
+async function runUnset(yes: boolean): Promise<void> {
+  const current = await getRetentionDays();
+  if (current === null) {
+    console.log(`保持期間は既に未設定です(本体のデフォルト ${DEFAULT_RETENTION_DAYS}日 が適用されます)`);
+    return;
+  }
+
+  // 未設定に戻す = デフォルトの日数に戻ることなので、短縮と同じ確認を通す
+  if (!(await confirmShortening(current, DEFAULT_RETENTION_DAYS, yes))) return;
+
+  await unsetRetentionDays();
+  console.log(pc.green(`✓ cleanupPeriodDays を ${userSettingsFile()} から削除しました`));
+  console.log(
+    pc.dim(`  未設定に戻したため、本体のデフォルト(現在 ${DEFAULT_RETENTION_DAYS}日)が適用されます`),
+  );
+}
+
 export function register(program: Command): void {
   program
     .command('retention [days]')
     .description('トランスクリプトの保持期間(cleanupPeriodDays)を表示・設定します')
     .option('--forever', `実質無期限にします(${FOREVER_RETENTION_DAYS}日)`)
+    .option('--unset', '設定を削除して未設定(本体のデフォルト)に戻します')
     .option('-y, --yes', '短縮時の確認を省略します')
-    .action(async (days: string | undefined, options: { forever?: boolean; yes?: boolean }) => {
-      let parsed: number | undefined;
-      if (days !== undefined) {
-        parsed = Number(days);
-        if (!Number.isInteger(parsed) || parsed < MIN_RETENTION_DAYS) {
-          console.error(
-            pc.red(`✖ 保持日数は ${MIN_RETENTION_DAYS} 以上の整数で指定してください。`) +
-              `\n  0 は Claude Code 本体に拒否されます(かつて「トランスクリプトを書かない」の意味だったため)。` +
-              `\n  実質無期限にするには --forever(${FOREVER_RETENTION_DAYS}日)を使ってください。`,
-          );
+    .action(
+      async (
+        days: string | undefined,
+        options: { forever?: boolean; unset?: boolean; yes?: boolean },
+      ) => {
+        if (options.unset && (days !== undefined || options.forever)) {
+          console.error(pc.red('✖ --unset は日数や --forever と同時に指定できません'));
           process.exit(1);
         }
-      }
-      await runRetention({ days: parsed, forever: options.forever, yes: options.yes });
-    });
+        let parsed: number | undefined;
+        if (days !== undefined) {
+          parsed = Number(days);
+          if (!Number.isInteger(parsed) || parsed < MIN_RETENTION_DAYS) {
+            console.error(
+              pc.red(`✖ 保持日数は ${MIN_RETENTION_DAYS} 以上の整数で指定してください。`) +
+                `\n  0 は Claude Code 本体に拒否されます(かつて「トランスクリプトを書かない」の意味だったため)。` +
+                `\n  実質無期限にするには --forever(${FOREVER_RETENTION_DAYS}日)を使ってください。`,
+            );
+            process.exit(1);
+          }
+        }
+        await runRetention({
+          days: parsed,
+          forever: options.forever,
+          unset: options.unset,
+          yes: options.yes,
+        });
+      },
+    );
 }
